@@ -200,8 +200,10 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
       }
     }
     // 根目录消失的项目：停 worker 并移除
+    // [fork] 项目删除时 sqlite/.cmd 被本进程句柄锁住、目录删不干净，只查根目录永远不触发；
+    // config.json（loadConfig 读完即关，不持句柄）消失 = 用户已删库跑路的可靠信号
     for (const [key, w] of workers) {
-      if (!fs.existsSync(w.root)) {
+      if (!fs.existsSync(w.root) || !fs.existsSync(path.join(w.root, '.sessionrelay', 'config.json'))) {
         await w.stop();
         workers.delete(key);
         log(`${why}: 移除失效项目 ${w.root}`);
