@@ -169,6 +169,23 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
 // ── [fork 0922] 全局守护：一个进程看管注册表全部项目 ──
 export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {}): Promise<void> {
   const log = opts.log ?? ((m: string) => process.stderr.write(`[srelay-watch] ${m}\n`));
+  // [fork] 全局实例锁：项目级管道锁只挡 worker，不挡壳——没有它，第二个 --global
+  // 进程会收编 0 个项目后空转变僵尸。固定名（与 cwd 无关），内核对象随进程死亡自动消失。
+  if (process.platform === 'win32') {
+    const BS = String.fromCharCode(92);
+    const glockAlive = await new Promise<boolean>((resolve) => {
+      const srv = net.createServer();
+      srv.once('error', (e: NodeJS.ErrnoException) => {
+        if (e && e.code === 'EADDRINUSE') {
+          log('全局守护已在运行（管道锁被占），本实例退出');
+          resolve(false);
+        } else resolve(true);
+      });
+      srv.listen(BS + BS + '.' + BS + 'pipe' + BS + 'srelay-watch-global', () => resolve(true));
+    });
+    if (!glockAlive) return;
+  }
+
   const workers = new Map<string, WatchWorker>();
 
   const adopt = async (why: string) => {
