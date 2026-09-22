@@ -36,29 +36,47 @@ function pipeLockName(root: string): string {
   return BS + BS + '.' + BS + 'pipe' + BS + 'srelay-watch-' + h;
 }
 
-function acquirePipeLock(root: string, log: (m: string) => void): Promise<boolean> {
+function globalPipeName(): string {
+  const BS = String.fromCharCode(92);
+  return BS + BS + '.' + BS + 'pipe' + BS + 'srelay-watch-global';
+}
+
+function acquirePipeLockByName(name: string, log: (m: string) => void, label: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') { resolve(true); return; } // 非 Windows 走原文件锁
     const srv = net.createServer();
     srv.once('error', (e: NodeJS.ErrnoException) => {
       if (e && e.code === 'EADDRINUSE') {
-        log(`管道锁被占（另一守护在跑），本实例退出: ${pipeLockName(root)}`);
+        log(`${label}锁被占（另一守护在跑），本实例退出: ${name}`);
         resolve(false);
       } else resolve(true); // 管道不可用 → 降级回文件锁语义
     });
-    srv.listen(pipeLockName(root), () => {
-      pipeLockServers.set(path.resolve(root).toLowerCase(), srv);
+    srv.listen(name, () => {
+      pipeLockServers.set(name, srv);
       resolve(true);
     });
   });
 }
 
+function acquirePipeLock(root: string, log: (m: string) => void): Promise<boolean> {
+  return acquirePipeLockByName(pipeLockName(root), log, '管道');
+}
+
 function releasePipeLock(root: string): void {
-  const key = path.resolve(root).toLowerCase();
-  const srv = pipeLockServers.get(key);
+  const name = pipeLockName(root);
+  const srv = pipeLockServers.get(name);
   if (srv) {
     try { srv.close(); } catch { /* 进程退出内核同样回收 */ }
-    pipeLockServers.delete(key);
+    pipeLockServers.delete(name);
+  }
+}
+
+function releaseGlobalPipeLock(): void {
+  const name = globalPipeName();
+  const srv = pipeLockServers.get(name);
+  if (srv) {
+    try { srv.close(); } catch { /* 忽略 */ }
+    pipeLockServers.delete(name);
   }
 }
 
@@ -171,20 +189,7 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
   const log = opts.log ?? ((m: string) => process.stderr.write(`[srelay-watch] ${m}\n`));
   // [fork] 全局实例锁：项目级管道锁只挡 worker，不挡壳——没有它，第二个 --global
   // 进程会收编 0 个项目后空转变僵尸。固定名（与 cwd 无关），内核对象随进程死亡自动消失。
-  if (process.platform === 'win32') {
-    const BS = String.fromCharCode(92);
-    const glockAlive = await new Promise<boolean>((resolve) => {
-      const srv = net.createServer();
-      srv.once('error', (e: NodeJS.ErrnoException) => {
-        if (e && e.code === 'EADDRINUSE') {
-          log('全局守护已在运行（管道锁被占），本实例退出');
-          resolve(false);
-        } else resolve(true);
-      });
-      srv.listen(BS + BS + '.' + BS + 'pipe' + BS + 'srelay-watch-global', () => resolve(true));
-    });
-    if (!glockAlive) return;
-  }
+  if (!(await acquirePipeLockByName(globalPipeName(), log, '全局'))) return;
 
   const workers = new Map<string, WatchWorker>();
 
@@ -221,5 +226,6 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
   });
   clearInterval(adoptTimer);
   for (const w of workers.values()) await w.stop();
+  releaseGlobalPipeLock();
   log('已退出');
 }

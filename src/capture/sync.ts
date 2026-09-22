@@ -58,8 +58,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   if (Date.now() - lastFullSweep > 600_000) syncWatermark.clear();
   lastFullSweep = Date.now();
 
-  // 改动 1：注册表初始化（含 custom adapter 加载）
-  ensureRegistered(root);
+  // 改动 1：注册表初始化（含 custom adapter 加载）——[fork] 原 here 连调两次，
+  // 第二次因 customLoaded 守卫恒返回空结果，custom adapter 的加载错误从未上报
   const customResult = ensureRegistered(root);
   for (const err of customResult.errors) result.warnings.push(`custom adapter 加载失败：${err}`);
 
