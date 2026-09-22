@@ -30,6 +30,7 @@ program
   .command('watch')
   .description('守护捕获（前台运行；--install-service 注册系统服务）')
   .option('--foreground', '前台运行（服务调用路径）')
+  .option('--global', '全局守护：一个进程看管项目注册表里的全部项目（动态收编新项目）')
   .option('--install-service', '注册守护服务（Windows 计划任务）')
   .option('--uninstall', '卸载守护服务')
   .option('--status', '查看守护与服务状态')
