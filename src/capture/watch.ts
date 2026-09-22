@@ -198,7 +198,18 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
       const key = path.resolve(c.root).toLowerCase();
       if (workers.has(key)) continue;
       try {
-        const w = await startWatchWorker({ projectRoot: c.root, config: loadConfig(c.root), log: (m) => log(`[${c.name}] ${m}`) });
+        // [fork 0922] 日志双写：全局守护的 stderr 全部落在启动项目（cwd）的 watch.log，
+        // 其余项目的 watch.log 会永久冻结——`srelay watch --status` 在那些项目里打印
+        // 僵尸日志尾巴，诊断直呼"守护死了"。worker 日志追加回自己项目的 watch.log。
+        const ownLog = path.join(c.root, '.sessionrelay', 'watch.log');
+        const w = await startWatchWorker({
+          projectRoot: c.root,
+          config: loadConfig(c.root),
+          log: (m) => {
+            log(`[${c.name}] ${m}`);
+            fs.appendFile(ownLog, `[srelay-watch] ${m}\n`, () => { /* 追加失败不影响运行 */ });
+          },
+        });
         if (w) { workers.set(key, w); log(`${why}: 收编 ${c.root}`); }
       } catch (e) {
         log(`${why}: 收编失败 ${c.root}: ${(e as Error).message}`);
